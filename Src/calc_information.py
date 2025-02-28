@@ -16,15 +16,21 @@ PATH_BASE = Path("/home/jmcbride/projects/PelofiReplyCode")
 
 
 
+####################################################################
+### The main code used to generate "JSD_vs_dprime.pdf"
+
+
 # Load Markov model transition matrix
 # The "inv" argument changes the grammars from `correct' (inv=False) to `incorrect' in Exp 2 and 3
-def load_mat(path, inv=False):
+def load_mat(path, inv=False, norm=False, inv_key=None):
     i, j, p = np.loadtxt(path).T
     i = i.astype(int)
     j = j.astype(int)
     n = np.max(np.append(i,j))
     mat = np.zeros((n,n), float)
-    inv_key = {3:4, 4:3, 5:6, 6:5}
+    if isinstance(inv_key, type(None)):
+        inv_key = {3:4, 4:3, 5:6, 6:5}
+
     for k in range(i.size):
         if inv:
             l = inv_key.get(i[k], i[k]) - 1
@@ -32,17 +38,21 @@ def load_mat(path, inv=False):
         else:
             l, m = i[k] - 1, j[k] - 1
         mat[l,m] = p[k]
+    if norm:
+        for i, m in enumerate(mat):
+            if np.sum(m) > 0:
+                mat[i] = m / m.sum()
     return mat
 
 
 # Load possible transitions and probabilities
 def load_grammar(n, inv=False):
-    return load_mat(PATH_BASE.joinpath(f'/Grammars/transitions_{n}.txt'), inv)
+    return load_mat(PATH_BASE.joinpath(f'Grammars/transitions_{n}.txt'), inv)
 
 
 # Load Markov model transition matrix foor Exp 1
 def load_grammar_exp1():
-    pairs = np.loadtxt(PATH_BASE.joinpath('/home/jmcbride/projects/Pelofi/Grammars/exp1.txt'), int)
+    pairs = np.loadtxt(PATH_BASE.joinpath('Grammars/exp1.txt'), int)
     mat = np.zeros((8,8), float)
     np.fill_diagonal(mat, 1)
     for i, j in zip(*pairs.T):
@@ -123,10 +133,10 @@ def exp3_scales(n=6):
 # starting on note with index i
 def generate_melody(mat, n, i=0):
     mel = [i]
-    for j in range(n):
+    for j in range(1, n):
         i = np.random.choice(range(len(mat)), p=mat[i])
         mel.append(i)
-        if i == len(mat) - 1 or i == 0:
+        if i == len(mat) - 1:
             break
     return np.array(mel)
 
@@ -164,6 +174,7 @@ def get_kl_divergence(s1, s2):
     n2 = np.sum(list(c2.values()))
     p1 = [c1.get(k,0)/n1 for k in c2.keys()]
     p2 = [c2.get(k,0)/n2 for k in c2.keys()]
+    print(p1, p2)
     return np.sum(rel_entr(p1, p2))
 
 
@@ -223,7 +234,7 @@ def plot_JSD_vs_dprime():
                 dprime_err.extend(list(load_dprime_error(exp, n*2)))
                 lbls.extend([(exp,n,a) for a in ['Uni', 'Sym', 'Asym']])
     ent, ent_inv, jsd = np.concatenate(out).T
-    sns.regplot(list(jsd), np.array(dprime)[:,1])
+    sns.regplot(x=list(jsd), y=np.array(dprime)[:,1])
     return out, dprime, dprime_err, lbls
 
 
@@ -309,6 +320,11 @@ def JSD_vs_dprime_paper_figure(jsd, dprime, dprime_err, lbls):
     fig.savefig("../JSD_vs_dprime.pdf", bbox_inches='tight')
 
 
+
+####################################################################
+### Code used to test information properties of alternate grammars
+
+
 def invert_grammar(mat):
     mat = mat.copy()
     inv_key = {2:3, 4:5}
@@ -321,32 +337,98 @@ def invert_grammar(mat):
 
 
 def random_grammar_prob(mat):
-    mat = np.copy(mat)
+    mat = np.zeros_like(mat)
     for i in range(len(mat)):
-        idx = np.where(mat[i]!=0.)[0]
+#       idx = np.where(mat[i]!=0.)[0]
+        idx = np.arange(i + 1, len(mat))
         prob = np.random.rand(len(idx))
         prob = prob / prob.sum()
         mat[i,idx] = prob
     return mat
 
 
-def alternative_grammars():
-    mat = load_grammar(12)
-    scales = exp2_scales(6)
+def uniform_grammar_prob(mat):
+    mat = np.zeros_like(mat)
+    for i in range(len(mat)):
+        idx = np.arange(i + 1, len(mat))
+        mat[i,idx] = np.ones(len(idx)) / len(idx)
+    return mat
+
+
+def alternative_grammars(exp, n, nmel=10000, nmat=20):
+    mat = load_grammar(n*2)
+    if exp == 2:
+        scales = exp2_scales(n)
+    else:
+        scales = exp3_scales(n)
     fig, ax = plt.subplots()
     for scale, lbl in zip(scales, ['Uniform', 'Symmetric', 'Asymmetric']):
         melodies, melodies_inv = [], []
-        for j in range(20):
+        for j in range(nmat):
             ran_mat = random_grammar_prob(mat)
-            ran_mat_inv = invert_grammar(ran_mat)
-            melodies.append([generate_melody(ran_mat, 6) for i in range(10000)])
-            melodies_inv.append([generate_melody(ran_mat_inv, 6) for i in range(10000)])
+            ran_mat_inv = random_grammar_prob(mat)
+#           ran_mat_inv = uniform_grammar_prob(mat)
+#           ran_mat_inv = invert_grammar(ran_mat)
+            melodies.append([generate_melody(ran_mat, 15) for i in range(nmel)])
+            melodies_inv.append([generate_melody(ran_mat_inv, 15) for i in range(nmel)])
         int_seq = [[convert_mel_to_int(m, scale) for m in mel] for mel in melodies]
         int_seq_inv = [[convert_mel_to_int(m, scale) for m in mel] for mel in melodies_inv]
 
-        jsd = [get_JSD(int_seq[i], int_seq_inv[i]) for i in range(20)]
+        jsd = [get_JSD(int_seq[i], int_seq_inv[i]) for i in range(nmat)]
         sns.distplot(jsd, label=lbl)
     ax.legend(loc='best', frameon=False)
+
+
+####################################################################
+### Comparing contours in Pelofi & Farbood
+
+
+# Run a simulation of experiment (1, 2 or 3)
+# Returns the entropy of the `correct' and `incorrect' grammars, and the JSD between them
+# n: number of notes in a scale
+# exp: experiment number
+# mel_len: maximum length of generated melody
+# nmel: number of melodies to generate
+def run_exp_contour(n=6, exp=2, mel_len=15, nmel=10000):
+
+    # Generate melodies using grammar from Pelofi & Farbood
+    if exp == 1:
+        melodies = generate_melodies_exp1(nmel, mel_len, False)
+        melodies_inv = generate_melodies_exp1(nmel, mel_len, True)
+    else:
+        mat = load_grammar(n*2)
+        mat_inv = load_grammar(n*2, True)
+        melodies = [generate_melody(mat, mel_len) for i in range(nmel)]
+        melodies_inv = [generate_melody(mat_inv, mel_len) for i in range(nmel)]
+
+    # Convert melodies to contours
+    key = {1:'+', -1:'-', 0:'_'}
+    contours = np.array([''.join(key[x] for x in np.sign(np.diff(m))) for m in melodies])
+    contours_inv = np.array([''.join(key[x] for x in np.sign(np.diff(m))) for m in melodies_inv])
+
+    # Get contour distributions
+    total_set = np.array(list(set(contours).union(set(contours_inv))))
+    fraction = np.array([np.mean(contours == c) for c in total_set])
+    fraction_inv = np.array([np.mean(contours_inv == c) for c in total_set])
+
+    # Plot contour distributions
+    order = np.argsort(fraction)[::-1]
+    fig, ax = plt.subplots()
+    width = 0.3
+    X = np.arange(len(total_set))
+    ax.bar(X - width / 2, fraction[order], width, ec='k')
+    ax.bar(X + width / 2, fraction_inv[order], width, ec='k')
+
+    threshold = 0.03
+    xticklabels = [c if (f1 > threshold) | (f2 > threshold) else ''
+                   for c, f1, f2 in zip(total_set, fraction[order], fraction_inv[order])]
+    ax.set_xticks(X)
+    ax.set_xticklabels(xticklabels, rotation=90)
+
+    JSD = jensenshannon(fraction, fraction_inv)
+    print(f"Jensen Shannon divergence between contour distributions: {JSD:5.2f}")
+
+    
 
 
 
